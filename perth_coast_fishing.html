@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Perth Coast Fishing</title>
+<style>
+:root{--sea:#0b6680;--deep:#063b5b;--sand:#d8c79a;--ink:#eefaff;--panel:rgba(3,24,40,.88);--gold:#ffd36a}
+*{box-sizing:border-box} body{margin:0;background:#062b42;color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
+#game{display:block;width:100vw;height:100vh;touch-action:none;background:#08718c}
+#hud{position:fixed;inset:0;pointer-events:none}
+.panel{background:var(--panel);border:1px solid #8dd6e477;border-radius:12px;padding:9px 12px;box-shadow:0 5px 20px #00152255}
+#title{position:absolute;top:10px;left:10px;font-weight:900;letter-spacing:.4px;font-size:16px}
+#stats{position:absolute;top:48px;left:10px;font-size:12px;line-height:1.55}
+#mapbox{position:absolute;right:10px;top:10px;width:174px;height:140px;padding:6px}
+#mapbox b{font-size:11px;display:block;margin:0 0 3px 3px}
+#minimap{width:100%;height:108px;border-radius:7px;background:#0b6480}
+#fight{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);width:min(380px,92vw);text-align:center;display:none}
+#fight .bar{height:17px;background:#142e3b;border-radius:20px;overflow:hidden;border:1px solid #b8e9f5;margin:7px 0}
+#fill{height:100%;width:40%;background:linear-gradient(90deg,#4be08a,#e8d54d,#ff675d);transition:width .08s}
+#hint{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;width:min(440px,90vw);font-weight:700;text-shadow:0 2px 4px #001}
+#controls{position:absolute;bottom:18px;left:12px;display:flex;gap:7px;pointer-events:auto}
+button{border:1px solid #a8e5f2aa;background:#082d46ee;color:white;border-radius:10px;padding:10px 13px;font-weight:750;font-size:13px}
+button:active{background:#176b83}
+#reel{position:absolute;right:12px;bottom:18px;pointer-events:auto;display:none}
+#toast{position:absolute;left:50%;top:18%;transform:translateX(-50%);font-weight:800;text-align:center;background:#082d46eF;padding:10px 16px;border-radius:10px;display:none}
+#help{position:absolute;bottom:72px;left:12px;font-size:11px;opacity:.85;max-width:230px}
+@media(max-width:600px){#mapbox{width:142px;height:123px}#minimap{height:90px}#stats{top:46px}#title{font-size:14px}#help{max-width:175px}}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+ <div id="title" class="panel">🎣 PERTH COAST FISHING</div>
+ <div id="stats" class="panel">Cash: $<span id="cash">250</span><br>Boat: <span id="boatname">Tinny</span><br>Catch: <span id="count">0</span></div>
+ <div id="mapbox" class="panel"><b>MINI MAP · PERTH COAST</b><canvas id="minimap" width="300" height="190"></canvas></div>
+ <div id="hint">Loading the coast…</div>
+ <div id="toast"></div>
+ <div id="fight" class="panel"><b id="fishname">Fish on!</b><div class="bar"><div id="fill"></div></div><small id="fighttext">Tap REEL / press SPACE in rhythm — keep tension out of the red!</small></div>
+ <div id="controls">
+  <button id="left">◀</button><button id="up">▲</button><button id="down">▼</button><button id="right">▶</button>
+  <button id="cast">CAST</button>
+ </div>
+ <button id="reel">REEL / SPACE</button>
+ <div id="help">WASD or arrows to drive · C to cast · SPACE to fight · Explore marinas and offshore grounds.</div>
+</div>
+<script>
+(()=>{
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d'), mini=document.getElementById('minimap'),mctx=mini.getContext('2d');
+let W=0,H=0,scale=1;
+function resize(){W=canvas.width=innerWidth*devicePixelRatio;H=canvas.height=innerHeight*devicePixelRatio;canvas.style.width=innerWidth+'px';canvas.style.height=innerHeight+'px';scale=devicePixelRatio;ctx.setTransform(scale,0,0,scale,0,0)}
+addEventListener('resize',resize);resize();
+const world={w:1900,h:1450};
+const coast=[{x:0,y:0},{x:550,y:0},{x:650,y:100},{x:700,y:260},{x:750,y:420},{x:810,y:600},{x:900,y:790},{x:980,y:960},{x:1060,y:1160},{x:1160,y:1450}];
+const places=[
+{name:'Rottnest Island',x:330,y:170,type:'island'},
+{name:'Fremantle Fishing Boat Harbour',x:760,y:640,type:'marina'},
+{name:'Fremantle Harbour',x:810,y:710,type:'marina'},
+{name:'Coogee Marina',x:900,y:880,type:'marina'},
+{name:'Woodman Point',x:970,y:1000,type:'spot'},
+{name:'Henderson Boat Harbour',x:1080,y:1210,type:'marina'},
+{name:'Cockburn Sound',x:1140,y:900,type:'spot'},
+{name:'Garden Island',x:1180,y:700,type:'island'}
+];
+const species=[
+{name:'Pink snapper',min:2,max:18,depth:'offshore',weight:1.1},
+{name:'Shark',min:15,max:95,depth:'offshore',weight:.7},
+{name:'Dhufish',min:3,max:25,depth:'offshore',weight:.75},
+{name:'KG whiting',min:.2,max:1.8,depth:'inshore',weight:1.3},
+{name:'Samson fish',min:8,max:35,depth:'offshore',weight:.7},
+{name:'Kingfish',min:8,max:38,depth:'offshore',weight:.65},
+{name:'Wobbegong shark',min:8,max:45,depth:'offshore',weight:.55},
+{name:'Bronze whaler shark',min:25,max:130,depth:'offshore',weight:.28},
+{name:'Port Jackson shark',min:3,max:12,depth:'inshore',weight:.4},
+{name:'Gummy shark',min:8,max:40,depth:'offshore',weight:.45},
+{name:'School shark',min:10,max:55,depth:'offshore',weight:.35}
+];
+let player={x:1010,y:760,angle:0,speed:0,boat:'Tinny'},cash=250,catches=0,keys={},fight=null,toastTimer=0,last=0;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function waterAt(x,y){let edge=coast[Math.floor(clamp(y/world.h,0,.999)*(coast.length-1))];return x>edge.x+35}
+function nearPlace(){return places.reduce((a,p)=>Math.hypot(p.x-player.x,p.y-player.y)<Math.hypot(a.x-player.x,a.y-player.y)?p:a,places[0])}
+function msg(s){let t=document.getElementById('toast');t.textContent=s;t.style.display='block';toastTimer=2.5}
+function cast(){if(fight)return;if(!waterAt(player.x,player.y)){msg('Head out onto the water before casting.');return}
+let place=nearPlace(),pool=species.filter(s=>s.depth==='offshore'||Math.hypot(place.x-player.x,place.y-player.y)<180);
+let total=pool.reduce((a,s)=>a+s.weight,0),r=Math.random()*total,fish=pool[0];for(let s of pool){r-=s.weight;if(r<=0){fish=s;break}}
+let kg=fish.min+Math.random()*(fish.max-fish.min);
+fight={fish,kg,tension:38,progress:0,phase:0,landed:false};document.getElementById('fishname').textContent=fish.name+' · '+kg.toFixed(1)+' kg';document.getElementById('fight').style.display='block';document.getElementById('reel').style.display='block';document.getElementById('hint').style.display='none';msg('Fish on! Keep the line under control!');
+}
+function reel(){if(!fight)return;fight.progress+=Math.random()*9+5;fight.tension+=Math.random()*8+5;if(fight.tension>85)fight.tension=85;if(fight.progress>=100){let reward=Math.round(fight.kg*({ 'Pink snapper':8,'Dhufish':12,'KG whiting':18,'Samson fish':9,'Kingfish':10}[fight.fish.name]||5));cash+=reward;catches++;document.getElementById('cash').textContent=cash;document.getElementById('count').textContent=catches;msg('Landed '+fight.fish.name+'! +$'+reward);endFight();}}
+function endFight(){fight=null;document.getElementById('fight').style.display='none';document.getElementById('reel').style.display='none';document.getElementById('hint').style.display='block'}
+function update(dt){let forward=keys.ArrowUp||keys.w||keys.W,back=keys.ArrowDown||keys.s||keys.S,left=keys.ArrowLeft||keys.a||keys.A,right=keys.ArrowRight||keys.d||keys.D;
+if(left)player.angle-=2.2*dt;if(right)player.angle+=2.2*dt;
+if(forward)player.speed=Math.min(player.speed+95*dt,155);else if(back)player.speed=Math.max(player.speed-120*dt,-55);else player.speed*=Math.pow(.94,dt*60);
+let nx=player.x+Math.cos(player.angle)*player.speed*dt,ny=player.y+Math.sin(player.angle)*player.speed*dt;
+if(waterAt(nx,ny)){player.x=clamp(nx,10,world.w-10);player.y=clamp(ny,10,world.h-10)}else player.speed=0;
+if(fight){fight.phase+=dt;fight.tension+=Math.sin(fight.phase*3)*dt*7+dt*3;fight.tension=clamp(fight.tension,0,100);fight.progress=Math.max(0,fight.progress-dt*2.5);if(fight.tension>96){msg('The line snapped! Try again.');endFight()}document.getElementById('fill').style.width=fight.tension+'%';document.getElementById('fill').style.background=fight.tension>78?'#ff554d':fight.tension>55?'#f1c84d':'#4be08a';document.getElementById('fighttext').textContent='Tension '+Math.round(fight.tension)+'% · Reel in short bursts';}
+if(toastTimer>0){toastTimer-=dt;if(toastTimer<=0)document.getElementById('toast').style.display='none'}
+}
+function draw(){let cw=innerWidth,ch=innerHeight;ctx.clearRect(0,0,cw,ch);
+let camX=clamp(player.x-cw/2,0,world.w-cw),camY=clamp(player.y-ch/2,0,world.h-ch);
+ctx.fillStyle='#08718c';ctx.fillRect(0,0,cw,ch);
+ctx.save();ctx.translate(-camX,-camY);
+ctx.fillStyle='#d9c99e';ctx.beginPath();ctx.moveTo(0,0);coast.forEach(p=>ctx.lineTo(p.x,p.y));ctx.lineTo(0,world.h);ctx.closePath();ctx.fill();
+ctx.fillStyle='#a9b77e';ctx.beginPath();ctx.moveTo(0,0);coast.forEach(p=>ctx.lineTo(p.x-15,p.y));ctx.lineTo(0,world.h);ctx.closePath();ctx.fill();
+ // shallow patches
+ for(let i=0;i<24;i++){let x=760+(i*83)%700,y=100+(i*127)%1250;if(waterAt(x,y)){ctx.fillStyle='rgba(76,180,167,.13)';ctx.beginPath();ctx.ellipse(x,y,40,18,.4,0,Math.PI*2);ctx.fill()}}
+ // island and land labels
+ ctx.fillStyle='#d7c89e';ctx.beginPath();ctx.ellipse(330,170,95,145,-.25,0,Math.PI*2);ctx.fill();ctx.fillStyle='#648d62';ctx.beginPath();ctx.ellipse(330,170,75,125,-.25,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle='#153b42';ctx.font='bold 18px system-ui';ctx.fillText('ROTTNEST ISLAND',235,170);
+ places.forEach(p=>{ctx.fillStyle=p.type==='marina'?'#ffe29a':'#ffffff';ctx.beginPath();ctx.arc(p.x,p.y,p.type==='marina'?7:5,0,Math.PI*2);ctx.fill();ctx.font='12px system-ui';ctx.fillText(p.name,p.x+10,p.y-8);
+ if(p.type==='marina'){ctx.strokeStyle='#d5edf0';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(p.x-25,p.y+12);ctx.lineTo(p.x+25,p.y+12);ctx.stroke();for(let j=-15;j<=15;j+=15){ctx.beginPath();ctx.moveTo(p.x+j,p.y+12);ctx.lineTo(p.x+j,p.y+38);ctx.stroke()}}});
+ // boat
+ ctx.save();ctx.translate(player.x,player.y);ctx.rotate(player.angle);ctx.fillStyle='#f6f2db';ctx.beginPath();ctx.moveTo(19,0);ctx.lineTo(-13,-10);ctx.lineTo(-9,0);ctx.lineTo(-13,10);ctx.closePath();ctx.fill();ctx.fillStyle='#e2a84e';ctx.fillRect(-7,-4,11,8);ctx.restore();
+ ctx.restore();
+ // minimap
+ mctx.clearRect(0,0,300,190);mctx.fillStyle='#0a6680';mctx.fillRect(0,0,300,190);mctx.fillStyle='#d6c59b';mctx.beginPath();mctx.moveTo(0,0);coast.forEach(p=>mctx.lineTo(p.x/world.w*300,p.y/world.h*190));mctx.lineTo(0,190);mctx.closePath();mctx.fill();
+ mctx.fillStyle='#d7c89e';mctx.beginPath();mctx.ellipse(330/world.w*300,170/world.h*190,15,21,-.25,0,Math.PI*2);mctx.fill();
+ places.forEach(p=>{mctx.fillStyle='#ffdf7d';mctx.beginPath();mctx.arc(p.x/world.w*300,p.y/world.h*190,2.8,0,Math.PI*2);mctx.fill()});
+ mctx.fillStyle='#ff554d';mctx.beginPath();mctx.arc(player.x/world.w*300,player.y/world.h*190,4,0,Math.PI*2);mctx.fill();
+ mctx.strokeStyle='#fff';mctx.lineWidth=1;mctx.strokeRect(player.x/world.w*300-5,player.y/world.h*190-5,10,10);
+}
+function loop(t){let dt=Math.min((t-last)/1000||0,.04);last=t;update(dt);draw();requestAnimationFrame(loop)}requestAnimationFrame(loop);
+addEventListener('keydown',e=>{keys[e.key]=true;if(e.code==='Space'){e.preventDefault();reel()}if(e.key.toLowerCase()==='c')cast()});
+addEventListener('keyup',e=>keys[e.key]=false);
+document.getElementById('cast').onclick=cast;document.getElementById('reel').onclick=reel;
+function bind(id,key){let b=document.getElementById(id);b.addEventListener('pointerdown',e=>{e.preventDefault();keys[key]=true});['pointerup','pointerleave','pointercancel'].forEach(ev=>b.addEventListener(ev,()=>keys[key]=false))}
+bind('left','ArrowLeft');bind('right','ArrowRight');bind('up','ArrowUp');bind('down','ArrowDown');
+document.getElementById('hint').innerHTML='🚤 <b>Welcome aboard!</b><br>Drive out from the coast and cast a line.<br><small>WASD / arrows to move · C to cast · SPACE to reel</small>';
+})();
+</script>
+</body></html>
